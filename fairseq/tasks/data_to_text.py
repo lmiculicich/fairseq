@@ -8,26 +8,28 @@
 import itertools
 import os
 
+#from collections import OrderedDict
 from fairseq import options, utils
 from fairseq.data import (
     ConcatDataset,
     data_utils,
     indexed_dataset,
-    LanguagePairDataset,
+    DataToTextDataset,
+    FeatDict,
 )
 
 from . import FairseqTask, register_task
 
 
-def load_langpair_dataset(
+def load_pair_dataset(
     data_path, split,
-    src, src_dict,
+    src, src_dicts, src_feat,
     tgt, tgt_dict,
     combine, dataset_impl, upsample_primary,
     left_pad_source, left_pad_target, max_source_positions, max_target_positions,
 ):
-    def split_exists(split, src, tgt, lang, data_path):
-        filename = os.path.join(data_path, '{}.{}-{}.{}'.format(split, src, tgt, lang))
+    def split_exists(split, src, tgt, feat, data_path):
+        filename = os.path.join(data_path, '{}.{}-{}.{}'.format(split, src, tgt, feat))
         return indexed_dataset.dataset_exists(filename, impl=dataset_impl)
 
     src_datasets = []
@@ -35,30 +37,29 @@ def load_langpair_dataset(
 
     for k in itertools.count():
         split_k = split + (str(k) if k > 0 else '')
-
-        # infer langcode
-        if split_exists(split_k, src, tgt, src, data_path):
+        if split_exists(split_k, src, tgt, tgt, data_path):
             prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, src, tgt))
-        elif split_exists(split_k, tgt, src, src, data_path):
-            prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, tgt, src))
         else:
             if k > 0:
                 break
             else:
                 raise FileNotFoundError('Dataset not found: {} ({})'.format(split, data_path))
 
-        src_datasets.append(indexed_dataset.make_dataset(prefix + src, impl=dataset_impl,
-                                                         fix_lua_indexing=True, dictionary=src_dict))
+        src_data = FeatDict()#OrderedDict()
+        for feat in src_feat:
+            src_data[feat] = indexed_dataset.make_dataset(prefix + feat, impl=dataset_impl,
+                                                         fix_lua_indexing=True, dictionary=src_dicts[feat])
+
+        src_datasets.append(src_data)
         tgt_datasets.append(indexed_dataset.make_dataset(prefix + tgt, impl=dataset_impl,
                                                          fix_lua_indexing=True, dictionary=tgt_dict))
-
-        print('| {} {} {}-{} {} examples'.format(data_path, split_k, src, tgt, len(src_datasets[-1])))
+        print('| {} {} {}-{} {} examples'.format(data_path, split_k, src_feat[0], tgt, len(src_datasets[-1])))
 
         if not combine:
             break
 
     assert len(src_datasets) == len(tgt_datasets)
-
+ 
     if len(src_datasets) == 1:
         src_dataset, tgt_dataset = src_datasets[0], tgt_datasets[0]
     else:
@@ -67,18 +68,19 @@ def load_langpair_dataset(
         src_dataset = ConcatDataset(src_datasets, sample_ratios)
         tgt_dataset = ConcatDataset(tgt_datasets, sample_ratios)
 
-    return LanguagePairDataset(
-        src_dataset, src_dataset.sizes, src_dict,
-        tgt_dataset, tgt_dataset.sizes, tgt_dict,
+    return DataToTextDataset(
+        src_dataset, src_dataset[src_feat[0]].sizes, src_dicts, src_feat,
+        tgt_dataset, tgt_dataset.sizes, tgt_dict, 
         left_pad_source=left_pad_source,
         left_pad_target=left_pad_target,
         max_source_positions=max_source_positions,
         max_target_positions=max_target_positions,
+        remove_eos_from_source=True,
     )
 
 
-@register_task('translation')
-class TranslationTask(FairseqTask):
+@register_task('data_to_text')
+class DataToTextTask(FairseqTask):
     """
     Translate from one (source) language to another (target) language.
 
@@ -123,12 +125,15 @@ class TranslationTask(FairseqTask):
                             help='max number of tokens in the target sequence')
         parser.add_argument('--upsample-primary', default=1, type=int,
                             help='amount to upsample primary dataset')
+        parser.add_argument('--source-features', type=str, metavar='ID1,ID2,..',
+                            help='input features ids', nargs='+')
         # fmt: on
 
-    def __init__(self, args, src_dict, tgt_dict):
+    def __init__(self, args, src_dicts, tgt_dict):
         super().__init__(args)
-        self.src_dict = src_dict
+        self.src_dicts = src_dicts
         self.tgt_dict = tgt_dict
+        self.src_feat = args.source_features
 
     @classmethod
     def setup_task(cls, args, **kwargs):
@@ -149,21 +154,22 @@ class TranslationTask(FairseqTask):
         paths = args.data.split(':')
         assert len(paths) > 0
         # find language pair automatically
-        if args.source_lang is None or args.target_lang is None:
-            args.source_lang, args.target_lang = data_utils.infer_language_pair(paths[0])
-        if args.source_lang is None or args.target_lang is None:
+        if args.source_features is None or args.target_lang is None:
             raise Exception('Could not infer language pair, please provide it explicitly')
 
         # load dictionaries
-        src_dict = cls.load_dictionary(os.path.join(paths[0], 'dict.{}.txt'.format(args.source_lang)))
         tgt_dict = cls.load_dictionary(os.path.join(paths[0], 'dict.{}.txt'.format(args.target_lang)))
-        assert src_dict.pad() == tgt_dict.pad()
-        assert src_dict.eos() == tgt_dict.eos()
-        assert src_dict.unk() == tgt_dict.unk()
-        print('| [{}] dictionary: {} types'.format(args.source_lang, len(src_dict)))
+
         print('| [{}] dictionary: {} types'.format(args.target_lang, len(tgt_dict)))
 
-        return cls(args, src_dict, tgt_dict)
+        src_dicts = FeatDict()#OrderedDict()
+        for feat in args.source_features:
+            src_dicts[feat] = cls.load_dictionary(os.path.join(paths[0], 'dict.{}.txt'.format(feat)))
+            assert src_dicts[feat].pad() == tgt_dict.pad()
+            assert src_dicts[feat].unk() == tgt_dict.unk()
+            print('| [{}] dictionary: {} types'.format(feat, len(src_dicts[feat])))
+
+        return cls(args, src_dicts, tgt_dict)
 
     def load_dataset(self, split, epoch=0, combine=False, **kwargs):
         """Load a given dataset split.
@@ -175,11 +181,9 @@ class TranslationTask(FairseqTask):
         assert len(paths) > 0
         data_path = paths[epoch % len(paths)]
 
-        # infer langcode
-        src, tgt = self.args.source_lang, self.args.target_lang
-
-        self.datasets[split] = load_langpair_dataset(
-            data_path, split, src, self.src_dict, tgt, self.tgt_dict,
+        self.datasets[split] = load_pair_dataset(
+            data_path, split, self.args.source_lang, self.src_dicts, self.src_feat, 
+            self.args.target_lang, self.tgt_dict,
             combine=combine, dataset_impl=self.args.dataset_impl,
             upsample_primary=self.args.upsample_primary,
             left_pad_source=self.args.left_pad_source,
@@ -189,7 +193,7 @@ class TranslationTask(FairseqTask):
         )
 
     def build_dataset_for_inference(self, src_tokens, src_lengths):
-        return LanguagePairDataset(src_tokens, src_lengths, self.source_dictionary)
+        return DataToTextDataset(src_tokens, src_lengths, self.source_dictionary, self.src_feat)
 
     def max_positions(self):
         """Return the max sentence length allowed by the task."""
@@ -198,7 +202,7 @@ class TranslationTask(FairseqTask):
     @property
     def source_dictionary(self):
         """Return the source :class:`~fairseq.data.Dictionary`."""
-        return self.src_dict
+        return self.src_dicts
 
     @property
     def target_dictionary(self):

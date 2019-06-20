@@ -50,20 +50,45 @@ WEIGHTS_NAME = "pytorch_model.bin"
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
+ARCHIVE_MAP = {
+    # Pre-trained models
+    'transformer.wmt14.en-fr':  'https://dl.fbaipublicfiles.com/fairseq/models/wmt14.en-fr.joined-dict.transformer.tar.bz2',
+    'transformer.wmt16.en-de':  'https://dl.fbaipublicfiles.com/fairseq/models/wmt16.en-de.joined-dict.transformer.tar.bz2',
+    'transformer.wmt18.en-de':  'https://dl.fbaipublicfiles.com/fairseq/models/wmt18.en-de.ensemble.tar.bz2',
 
-def load_archive_file(archive_file):
+    'conv.wmt14.en-fr':         'https://dl.fbaipublicfiles.com/fairseq/models/wmt14.v2.en-fr.fconv-py.tar.bz2',
+    'conv.wmt14.en-de':         'https://dl.fbaipublicfiles.com/fairseq/models/wmt14.en-de.fconv-py.tar.bz2',
+    'conv.wmt17.en-de':         'https://dl.fbaipublicfiles.com/fairseq/models/wmt17.v2.en-de.fconv-py.tar.bz2',
+
+    'conv.stories':             'https://dl.fbaipublicfiles.com/fairseq/models/stories_checkpoint.tar.bz2',
+
+    # Test sets with dictionaries
+    'data.newstest1213.en-de':      'https://dl.fbaipublicfiles.com/fairseq/data/wmt14.v2.en-fr.ntst1213.tar.bz2',
+    'data.newstest14.en-fr':        'https://dl.fbaipublicfiles.com/fairseq/data/wmt14.v2.en-fr.newstest2014.tar.bz2',
+    'data.newstest14.en-fr.joined': 'https://dl.fbaipublicfiles.com/fairseq/data/wmt14.en-fr.joined-dict.newstest2014.tar.bz2',
+    'data.newstest14.en-de':        'https://dl.fbaipublicfiles.com/fairseq/data/wmt14.en-de.newstest2014.tar.bz2',
+    'data.newstest14.en-de.joined': 'https://dl.fbaipublicfiles.com/fairseq/data/wmt16.en-de.joined-dict.newstest2014.tar.bz2',
+    'data.stories':                 'https://dl.fbaipublicfiles.com/fairseq/data/stories_test.tar.bz2',
+}
+
+
+def load_archive_file(name_or_path):
+    if name_or_path in ARCHIVE_MAP:
+        archive_file = ARCHIVE_MAP[name_or_path]
+    else:
+        archive_file = name_or_path
+
     # redirect to the cache, if necessary
     try:
         resolved_archive_file = cached_path(archive_file, cache_dir=None)
     except EnvironmentError:
         print(
-            "Archive name '{}' was not found in archive name list. "
-            "We assumed '{}' was a path or URL but couldn't find any file "
-            "associated to this path or URL.".format(
-                archive_file,
-                archive_file,
-            )
-        )
+            "Archive name '{}' was not found in archive name list ({}). "
+            "We assumed '{}' was a path or url but couldn't find any file "
+            "associated to this path or url.".format(
+                name_or_path,
+                ', '.join(ARCHIVE_MAP.keys()),
+                archive_file))
         return None
 
     if resolved_archive_file == archive_file:
@@ -78,8 +103,7 @@ def load_archive_file(archive_file):
         tempdir = tempfile.mkdtemp()
         print("extracting archive file {} to temp dir {}".format(
             resolved_archive_file, tempdir))
-        ext = os.path.splitext(archive_file)[1][1:]
-        with tarfile.open(resolved_archive_file, 'r:' + ext) as archive:
+        with tarfile.open(resolved_archive_file, 'r:bz2') as archive:
             top_dir = os.path.commonprefix(archive.getnames())
             archive.extractall(tempdir)
         os.remove(resolved_archive_file)
@@ -92,7 +116,7 @@ def load_archive_file(archive_file):
 def url_to_filename(url, etag=None):
     """
     Convert `url` into a hashed filename in a repeatable way.
-    If `etag` is specified, append its hash to the URL's, delimited
+    If `etag` is specified, append its hash to the url's, delimited
     by a period.
     """
     url_bytes = url.encode('utf-8')

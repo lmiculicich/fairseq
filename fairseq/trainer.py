@@ -79,7 +79,7 @@ class Trainer(object):
     @property
     def model(self):
         if self._wrapped_model is None:
-            if self.args.distributed_world_size > 1 and not self.args.use_bmuf:
+            if self.args.distributed_world_size > 1:
                 self._wrapped_model = models.DistributedFairseqModel(
                     self.args, self._model,
                 )
@@ -114,9 +114,6 @@ class Trainer(object):
                 print('| NOTICE: your device may support faster training with --fp16')
             self._optimizer = optim.build_optimizer(self.args, params)
 
-        if self.args.use_bmuf:
-            self._optimizer = optim.FairseqBMUF(self.args, params, self._optimizer)
-
         # We should initialize the learning rate scheduler immediately after
         # building the optimizer, so that the initial learning rate is set.
         self._lr_scheduler = lr_scheduler.build_lr_scheduler(self.args, self.optimizer)
@@ -145,7 +142,6 @@ class Trainer(object):
 
         if os.path.exists(filename):
             state = checkpoint_utils.load_checkpoint_to_cpu(filename)
-
             # load model parameters
             try:
                 self.get_model().load_state_dict(state['model'], strict=True)
@@ -229,7 +225,6 @@ class Trainer(object):
 
         if not dummy_batch:
             self.meters['train_wall'].start()
-
         # forward and backward pass
         logging_outputs, sample_sizes, ooms = [], [], 0
         for i, sample in enumerate(samples):
@@ -289,13 +284,7 @@ class Trainer(object):
             return None
 
         # gather logging outputs from all replicas
-        if self.args.distributed_world_size > 1 and (
-            (not self.args.use_bmuf)
-            or (
-                self.args.use_bmuf
-                and (self.get_num_updates() + 1) % self.args.global_sync_iter == 0
-            )
-        ):
+        if self.args.distributed_world_size > 1:
             logging_outputs, sample_sizes, ooms, prev_norms = \
                 zip(*distributed_utils.all_gather_list(
                     [logging_outputs, sample_sizes, ooms, self._prev_grad_norm],
@@ -303,12 +292,10 @@ class Trainer(object):
             logging_outputs = list(chain.from_iterable(logging_outputs))
             sample_sizes = list(chain.from_iterable(sample_sizes))
             ooms = sum(ooms)
-
-            if not self.args.use_bmuf:
-                assert (
-                    all(norm == prev_norms[0] for norm in prev_norms)
-                    or all(math.isnan(norm) or math.isinf(norm) for norm in prev_norms)
-                ), 'Fatal error: gradients are inconsistent between workers'
+            assert (
+                all(norm == prev_norms[0] for norm in prev_norms)
+                or all(math.isnan(norm) or math.isinf(norm) for norm in prev_norms)
+            ), 'Fatal error: gradients are inconsistent between workers'
 
         self.meters['oom'].update(ooms, len(samples))
         if ooms == self.args.distributed_world_size * len(samples):
@@ -330,8 +317,7 @@ class Trainer(object):
 
         try:
             # normalize grads by sample size
-            if sample_size > 0:
-                self.optimizer.multiply_grads(self.args.distributed_world_size / float(sample_size))
+            self.optimizer.multiply_grads(self.args.distributed_world_size / float(sample_size))
 
             # clip grads
             grad_norm = self.optimizer.clip_grad_norm(self.args.clip_norm)
@@ -457,7 +443,7 @@ class Trainer(object):
 
     def lr_step(self, epoch, val_loss=None):
         """Adjust the learning rate based on the validation loss."""
-        self.lr_scheduler.step(epoch, val_loss)
+        _lr = self.lr_scheduler.step(epoch, val_loss)
         # prefer updating the LR based on the number of steps
         return self.lr_step_update()
 

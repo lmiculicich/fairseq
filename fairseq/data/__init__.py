@@ -23,6 +23,8 @@ from .round_robin_zip_datasets import RoundRobinZipDatasets
 from .token_block_dataset import TokenBlockDataset
 from .transform_eos_dataset import TransformEosDataset
 from .transform_eos_lang_pair_dataset import TransformEosLangPairDataset
+from .data_to_text_dataset import DataToTextDataset
+from .data_to_text_dataset import FeatDict
 
 from .iterators import (
     CountingIterator,

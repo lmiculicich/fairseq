@@ -27,6 +27,7 @@ from .scalar_bias import ScalarBias
 from .sinusoidal_positional_embedding import SinusoidalPositionalEmbedding
 from .transformer_sentence_encoder_layer import TransformerSentenceEncoderLayer
 from .transformer_sentence_encoder import TransformerSentenceEncoder
+from .GlobalSelfAttention import GlobalSelfAttention
 from .unfold import unfold1d
 
 __all__ = [

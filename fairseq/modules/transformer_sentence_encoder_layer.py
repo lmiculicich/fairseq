@@ -50,7 +50,6 @@ class TransformerSentenceEncoderLayer(nn.Module):
             dropout=attention_dropout,
             add_bias_kv=add_bias_kv,
             add_zero_attn=add_zero_attn,
-            self_attention=True
         )
 
         # layer norm associated with the self attention layer

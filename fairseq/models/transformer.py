@@ -49,14 +49,6 @@ class TransformerModel(FairseqEncoderDecoderModel):
         :prog:
     """
 
-    @classmethod
-    def hub_models(cls):
-        return {
-            'transformer.wmt14.en-fr': 'https://dl.fbaipublicfiles.com/fairseq/models/wmt14.en-fr.joined-dict.transformer.tar.bz2',
-            'transformer.wmt16.en-de': 'https://dl.fbaipublicfiles.com/fairseq/models/wmt16.en-de.joined-dict.transformer.tar.bz2',
-            'transformer.wmt18.en-de': 'https://dl.fbaipublicfiles.com/fairseq/models/wmt18.en-de.ensemble.tar.gz',
-        }
-
     def __init__(self, encoder, decoder):
         super().__init__(encoder, decoder)
 
@@ -288,7 +280,7 @@ class TransformerEncoder(FairseqEncoder):
             state_dict['{}.embed_positions._float_tensor'.format(name)] = torch.FloatTensor(1)
         for i in range(len(self.layers)):
             # update layer norms
-            self.layers[i].upgrade_state_dict_named(state_dict, "{}.layers.{}".format(name, i))
+            self.layers[i].upgrade_state_dict_named(state_dict, f"{name}.layers.{i}")
 
         version_key = '{}.version'.format(name)
         if utils.item(state_dict.get(version_key, torch.Tensor([1]))[0]) < 2:
@@ -520,7 +512,7 @@ class TransformerEncoderLayer(nn.Module):
         self.embed_dim = args.encoder_embed_dim
         self.self_attn = MultiheadAttention(
             self.embed_dim, args.encoder_attention_heads,
-            dropout=args.attention_dropout, self_attention=True
+            dropout=args.attention_dropout,
         )
         self.self_attn_layer_norm = LayerNorm(self.embed_dim)
         self.dropout = args.dropout
@@ -548,10 +540,10 @@ class TransformerEncoderLayer(nn.Module):
         }
         for old, new in layer_norm_map.items():
             for m in ('weight', 'bias'):
-                k = '{}.layer_norms.{}.{}'.format(name, old, m)
+                k = f'{name}.layer_norms.{old}.{m}'
                 if k in state_dict:
                     state_dict[
-                        '{}.{}.{}'.format(name, new, m)
+                        f'{name}.{new}.{m}'
                     ] = state_dict[k]
                     del state_dict[k]
 
@@ -616,7 +608,6 @@ class TransformerDecoderLayer(nn.Module):
             dropout=args.attention_dropout,
             add_bias_kv=add_bias_kv,
             add_zero_attn=add_zero_attn,
-            self_attention=True
         )
         self.dropout = args.dropout
         self.activation_fn = utils.get_activation_fn(
@@ -640,7 +631,7 @@ class TransformerDecoderLayer(nn.Module):
         else:
             self.encoder_attn = MultiheadAttention(
                 self.embed_dim, args.decoder_attention_heads,
-                dropout=args.attention_dropout, encoder_decoder_attention=True
+                dropout=args.attention_dropout,
             )
             self.encoder_attn_layer_norm = LayerNorm(self.embed_dim, export=export)
 
